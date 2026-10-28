@@ -1,0 +1,208 @@
+# Chart label name and resource-name base overrides.
+# fullnameOverride defaults to the Helm release name.
+nameOverride: ""
+fullnameOverride: ""
+image:
+  repository: ghcr.io/bookwyrm-social/bookwyrm
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+serviceAccount:
+  create: true
+  # Empty uses fullname when creating, or default when create=false.
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: false
+domain: bookwyrm.example.com
+# Set to an existing Secret name to skip creating the application Secret.
+existingSecret: ""
+# Replace placeholders using a SOPS-encrypted values file, decrypted before Helm runs.
+# With bundled services and no auth.existingSecret, dependency passwords below
+# override the corresponding application password to keep credentials in sync.
+secret:
+  secretKey: REPLACE_WITH_RANDOM_SECRET
+  postgresPassword: REPLACE_POSTGRES_PASSWORD
+  redisBrokerPassword: REPLACE_BROKER_PASSWORD
+  redisActivityPassword: REPLACE_ACTIVITY_PASSWORD
+  emailPassword: REPLACE_EMAIL_PASSWORD
+  s3AccessKeyId: REPLACE_S3_ACCESS_KEY_ID
+  s3SecretAccessKey: REPLACE_S3_SECRET_ACCESS_KEY
+# Required initial administrator. No enable switch; provide a password or Secret.
+admin:
+  username: admin
+  email: ""
+  password: ""
+  existingSecret: ""
+  passwordSecretKey: password
+service:
+  port: 80
+  type: ClusterIP
+postgres:
+  host: postgres.example.svc
+  port: 5432
+  database: bookwyrm
+  user: bookwyrm
+redis:
+  brokerHost: redis-broker.example.svc
+  activityHost: redis-activity.example.svc
+  port: 6379
+# Bundled PostgreSQL, Redis, and Garage are TESTING ONLY.
+# Production services must be managed outside this Helm release (in-cluster is fine).
+# The application secret must contain matching POSTGRES_PASSWORD and REDIS_*_PASSWORD.
+postgresql:
+  enabled: false
+  fullnameOverride: bookwyrm-postgresql
+  auth:
+    username: bookwyrm
+    database: bookwyrm
+    existingSecret: ""
+    postgresPassword: REPLACE_POSTGRES_ADMIN_PASSWORD
+    password: REPLACE_POSTGRES_PASSWORD
+  primary:
+    persistence:
+      enabled: true
+      size: 8Gi
+redisBroker:
+  enabled: false
+  fullnameOverride: bookwyrm-redis-broker
+  architecture: standalone
+  auth:
+    enabled: true
+    existingSecret: ""
+    password: REPLACE_BROKER_PASSWORD
+    existingSecretPasswordKey: redis-password
+  master:
+    persistence:
+      enabled: true
+      size: 2Gi
+redisActivity:
+  enabled: false
+  fullnameOverride: bookwyrm-redis-activity
+  architecture: standalone
+  auth:
+    enabled: true
+    existingSecret: ""
+    password: REPLACE_ACTIVITY_PASSWORD
+    existingSecretPasswordKey: redis-password
+  master:
+    persistence:
+      enabled: true
+      size: 2Gi
+email:
+  host: smtp.example.com
+  port: 587
+  user: ""
+  senderDomain: example.com
+  useTLS: true
+web:
+  service:
+    port: 8080
+    type: ClusterIP
+  replicas: 1
+  command: ["gunicorn", "bookwyrm.wsgi:application", "--bind", "0.0.0.0:8000"]
+  resources: {}
+worker:
+  replicas: 1
+  command: ["celery", "-A", "celerywyrm", "worker", "-l", "INFO"]
+  resources: {}
+beat:
+  command: ["celery", "-A", "celerywyrm", "beat", "-l", "INFO"]
+  resources: {}
+# Required S3-compatible backend. Both asset URLs and signed export URLs must be
+# reachable by browsers; public federation also needs publicly reachable media.
+s3:
+  endpointUrl: https://s3.example.com
+  region: us-east-1
+  bucket: bookwyrm
+  # Host (and optional path), without a scheme. Serves the bucket root publicly.
+  customDomain: assets.example.com
+  # Empty derives the asset URL scheme from endpointUrl.
+  urlProtocol: ""
+  # Empty disables object ACL headers, for providers such as Garage.
+  defaultAcl: ""
+  # Separate PRIVATE bucket for imports/exports; never expose as a website.
+  exportsBucket: bookwyrm-exports
+  # Optional credential Secret with AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.
+  # Empty uses secret.s3AccessKeyId / secret.s3SecretAccessKey in the app Secret.
+  existingSecret: ""
+  # Expose both bundled Garage endpoints using the URLs above.
+  ingress:
+    enabled: false
+    # Empty inherits ingress.className (e.g. tailscale).
+    className: ""
+    annotations: {}
+    tls:
+      enabled: true
+      # Optional for controllers that require certificate Secrets.
+      apiSecretName: ""
+      assetsSecretName: ""
+garage:
+  enabled: false
+  # Published Garage chart dependency; bundled deployment is TESTING ONLY.
+  garage:
+    replicationFactor: "1"
+    s3:
+      api:
+        region: garage
+    # Empty credentials are generated once and reused across Helm operations.
+    secret:
+      create: true
+      name: ""
+      rpcSecret: ""
+      adminToken: ""
+  deployment:
+    replicaCount: 1
+  persistence:
+    meta:
+      size: 100Mi
+    data:
+      size: 5Gi
+  clusterConfig:
+    enabled: true
+    layout:
+      enabled: true
+    helmSync:
+      asHook: false
+  # Keep dependency ingresses disabled; s3.ingress derives hosts from s3 URLs.
+  ingress:
+    s3:
+      api:
+        enabled: false
+      web:
+        enabled: false
+
+ingress:
+  enabled: false
+  # Defaults to the Helm release name, matching the public Service.
+  name: ""
+  className: traefik
+  annotations: {}
+  hosts:
+    - host: bookwyrm.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - hosts:
+        - bookwyrm.example.com
+      secretName: bookwyrm-tls
+migration:
+  enabled: true
+  # Gate web, worker, and beat startup on all Django migrations being applied.
+  # With enabled=false, this can still wait for migrations managed externally.
+  waitForMigrations: true
+  extensions:
+    # Automatically provision bloom before migrations, including on existing PVCs.
+    # Bundled PostgreSQL uses its admin Secret automatically. For external
+    # PostgreSQL, set existingSecret to enable provisioning with admin credentials.
+    enabled: true
+    username: postgres
+    existingSecret: ""
+    secretKey: postgres-password
+  # Compile themes and upload static assets to S3 before web startup.
+  collectStatic: true
+  # Bound database startup waits and migration execution (seconds).
+  activeDeadlineSeconds: 600
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 86400
+extraEnv: []

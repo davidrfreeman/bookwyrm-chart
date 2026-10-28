@@ -1,0 +1,16 @@
+---
+dependencies:
+- name: postgresql
+  version: 18.12.15
+  repository: https://charts.bitnami.com/bitnami
+- name: redis
+  version: 28.3.9
+  repository: https://charts.bitnami.com/bitnami
+- name: redis
+  version: 28.3.9
+  repository: https://charts.bitnami.com/bitnami
+- name: garage
+  version: 0.8.0
+  repository: https://datahub-local.github.io/garage-helm
+digest: sha256:daf3642715dcfc7c557d9bcbcc0174e13023f418b27e13d0076bc13e35abe098
+generated: '2026-10-27T19:15:53Z'

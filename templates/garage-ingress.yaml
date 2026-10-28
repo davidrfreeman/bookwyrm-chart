@@ -1,0 +1,44 @@
+{{- if and .Values.garage.enabled .Values.s3.ingress.enabled }}
+{{- $class := .Values.s3.ingress.className | default .Values.ingress.className }}
+{{- $service := include "garage.fullname" .Subcharts.garage }}
+{{- $apiHost := (urlParse .Values.s3.endpointUrl).hostname }}
+{{- $assetHost := (urlParse (printf "%s//%s" (include "bookwyrm.s3UrlProtocol" .) .Values.s3.customDomain)).hostname }}
+{{- range $endpoint := list
+  (dict "name" "api" "host" $apiHost "port" $.Values.garage.service.ports.s3Api "secret" $.Values.s3.ingress.tls.apiSecretName)
+  (dict "name" "assets" "host" $assetHost "port" $.Values.garage.service.ports.s3Web "secret" $.Values.s3.ingress.tls.assetsSecretName)
+}}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "bookwyrm.resourceName" (dict "context" $ "suffix" (printf "garage-%s" $endpoint.name)) }}
+  labels:
+    {{- include "bookwyrm.labels" $ | nindent 4 }}
+  {{- with $.Values.s3.ingress.annotations }}
+  annotations: {{ toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $class }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  {{- if $.Values.s3.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ $endpoint.host | quote }}
+      {{- with $endpoint.secret }}
+      secretName: {{ . | quote }}
+      {{- end }}
+  {{- end }}
+  rules:
+    - host: {{ $endpoint.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $service | quote }}
+                port:
+                  number: {{ $endpoint.port }}
+{{- end }}
+{{- end }}

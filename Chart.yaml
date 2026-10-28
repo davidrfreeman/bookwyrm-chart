@@ -1,0 +1,25 @@
+apiVersion: v2
+name: bookwyrm
+description: Unofficial experimental BookWyrm deployment with S3 storage and optional testing-only dependencies
+type: application
+version: 1.0.0
+appVersion: "v0.9.3"
+dependencies:
+  - name: postgresql
+    version: "18.12.15"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+  - name: redis
+    alias: redisBroker
+    version: "28.3.9"
+    repository: https://charts.bitnami.com/bitnami
+    condition: redisBroker.enabled
+  - name: redis
+    alias: redisActivity
+    version: "28.3.9"
+    repository: https://charts.bitnami.com/bitnami
+    condition: redisActivity.enabled
+  - name: garage
+    version: "0.8.0"
+    repository: https://datahub-local.github.io/garage-helm
+    condition: garage.enabled

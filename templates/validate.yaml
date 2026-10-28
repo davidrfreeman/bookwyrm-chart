@@ -1,0 +1,26 @@
+{{- if eq .Values.s3.bucket .Values.s3.exportsBucket }}
+{{- fail "s3.exportsBucket must differ from the public s3.bucket" }}
+{{- end }}
+{{- if contains "://" .Values.s3.customDomain }}
+{{- fail "s3.customDomain must not contain a URL scheme; use s3.urlProtocol" }}
+{{- end }}
+
+{{- $endpoint := urlParse .Values.s3.endpointUrl }}
+{{- if or (not (has $endpoint.scheme (list "http" "https"))) (empty $endpoint.hostname) }}
+{{- fail "s3.endpointUrl must be an http or https URL with a hostname" }}
+{{- end }}
+{{- if and .Values.s3.urlProtocol (not (has .Values.s3.urlProtocol (list "http:" "https:"))) }}
+{{- fail "s3.urlProtocol must be http: or https:" }}
+{{- end }}
+{{- if and .Values.garage.enabled .Values.s3.ingress.enabled }}
+{{- if or .Values.garage.ingress.s3.api.enabled .Values.garage.ingress.s3.web.enabled }}
+{{- fail "use s3.ingress.enabled with dependency garage.ingress.s3.api/web.enabled=false to derive hosts automatically" }}
+{{- end }}
+{{- end }}
+
+{{- $_ := required "admin.username is required" .Values.admin.username }}
+{{- $_ := required "admin.email is required" .Values.admin.email }}
+{{- $_ := required "admin.passwordSecretKey is required" .Values.admin.passwordSecretKey }}
+{{- if not .Values.admin.existingSecret }}
+{{- $_ := required "admin.password or admin.existingSecret is required" .Values.admin.password }}
+{{- end }}

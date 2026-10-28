@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "bookwyrm.resourceName" (dict "context" . "suffix" "web") }}
+spec:
+  replicas: {{ .Values.web.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: web
+    spec:
+      serviceAccountName: {{ include "bookwyrm.serviceAccountName" . | quote }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if or .Values.migration.waitForMigrations .Values.migration.collectStatic }}
+      initContainers:
+        {{- include "bookwyrm.waitForInitialization" . | nindent 8 }}
+        {{- if .Values.migration.collectStatic }}
+        - name: collect-static
+          image: {{ include "bookwyrm.image" . | quote }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              python manage.py compile_themes
+              python manage.py collectstatic --noinput
+          {{- include "bookwyrm.appEnv" . | nindent 10 }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: web
+          image: {{ include "bookwyrm.image" . | quote }}
+          command: {{ toJson .Values.web.command }}
+          {{- include "bookwyrm.appEnv" . | nindent 10 }}
+          resources: {{ toYaml .Values.web.resources | nindent 12 }}
+          ports:
+            - name: gunicorn
+              containerPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "bookwyrm.resourceName" (dict "context" . "suffix" "worker") }}
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: worker
+    spec:
+      serviceAccountName: {{ include "bookwyrm.serviceAccountName" . | quote }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.migration.waitForMigrations }}
+      initContainers:
+        {{- include "bookwyrm.waitForInitialization" . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: worker
+          image: {{ include "bookwyrm.image" . | quote }}
+          command: {{ toJson .Values.worker.command }}
+          {{- include "bookwyrm.appEnv" . | nindent 10 }}
+          resources: {{ toYaml .Values.worker.resources | nindent 12 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "bookwyrm.resourceName" (dict "context" . "suffix" "beat") }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: beat
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: beat
+    spec:
+      serviceAccountName: {{ include "bookwyrm.serviceAccountName" . | quote }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.migration.waitForMigrations }}
+      initContainers:
+        {{- include "bookwyrm.waitForInitialization" . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: beat
+          image: {{ include "bookwyrm.image" . | quote }}
+          command: {{ toJson .Values.beat.command }}
+          {{- include "bookwyrm.appEnv" . | nindent 10 }}
+          resources: {{ toYaml .Values.beat.resources | nindent 12 }}

@@ -1,0 +1,105 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "bookwyrm.resourceName" (dict "context" . "suffix" (printf "init-%v" .Release.Revision)) }}
+spec:
+  activeDeadlineSeconds: {{ .Values.migration.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ .Values.migration.ttlSecondsAfterFinished }}
+  backoffLimit: {{ .Values.migration.backoffLimit }}
+  template:
+    spec:
+      serviceAccountName: {{ include "bookwyrm.serviceAccountName" . | quote }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      restartPolicy: OnFailure
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- $extensions := .Values.migration.extensions }}
+      {{- if and $extensions.enabled (or .Values.postgresql.enabled $extensions.existingSecret) }}
+      initContainers:
+        - name: install-postgresql-extensions
+          image: {{ include "bookwyrm.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "manage.py", "shell", "-c"]
+          args:
+            - |
+              import os
+              import time
+              from django.db import connection, OperationalError
+
+              connection.close()
+              connection.settings_dict["USER"] = os.environ["POSTGRES_ADMIN_USER"]
+              connection.settings_dict["PASSWORD"] = os.environ["POSTGRES_ADMIN_PASSWORD"]
+              while True:
+                  try:
+                      connection.ensure_connection()
+                      break
+                  except OperationalError:
+                      print("Waiting for PostgreSQL admin connection...", flush=True)
+                      connection.close()
+                      time.sleep(5)
+              connection.set_autocommit(True)
+              with connection.cursor() as cursor:
+                  cursor.execute("CREATE EXTENSION IF NOT EXISTS bloom")
+              connection.close()
+              print("PostgreSQL extensions ready.", flush=True)
+          envFrom:
+            - secretRef:
+                name: {{ include "bookwyrm.secretName" . | quote }}
+          env:
+            {{- include "bookwyrm.env" . | nindent 12 }}
+            - name: POSTGRES_ADMIN_USER
+              value: {{ $extensions.username | quote }}
+            - name: POSTGRES_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  {{- if $extensions.existingSecret }}
+                  name: {{ $extensions.existingSecret | quote }}
+                  key: {{ $extensions.secretKey | quote }}
+                  {{- else }}
+                  name: {{ include "postgresql.v1.secretName" .Subcharts.postgresql | quote }}
+                  key: {{ include "postgresql.v1.adminPasswordKey" .Subcharts.postgresql | quote }}
+                  {{- end }}
+      {{- end }}
+      containers:
+        - name: init
+          image: {{ include "bookwyrm.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              until python manage.py shell -c "from django.db import connection; connection.ensure_connection()"; do
+                echo "Waiting for PostgreSQL..."
+                sleep 5
+              done
+              {{- if .Values.migration.enabled }}
+              python manage.py migrate --noinput
+              python manage.py migrate django_celery_beat --noinput
+              {{- else }}
+              until python manage.py migrate --check; do
+                echo "Waiting for externally managed migrations..."
+                sleep 5
+              done
+              {{- end }}
+              echo "Starting required BookWyrm admin initialization..."
+              PYTHONUNBUFFERED=1 python manage.py shell -c 'exec(open("/bootstrap/admin-bootstrap.py").read()); main()'
+              echo "BookWyrm initialization complete."
+          envFrom:
+            - secretRef: {name: {{ include "bookwyrm.secretName" . | quote }}}
+          env:
+{{ include "bookwyrm.env" . | indent 12 }}
+            - name: BOOKWYRM_ADMIN_EMAIL
+              value: {{ .Values.admin.email | quote }}
+            - name: BOOKWYRM_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bookwyrm.adminSecretName" . | quote }}
+                  key: {{ .Values.admin.passwordSecretKey | quote }}
+          volumeMounts:
+            - name: admin-bootstrap
+              mountPath: /bootstrap
+              readOnly: true
+      volumes:
+        - name: admin-bootstrap
+          configMap:
+            name: {{ include "bookwyrm.resourceName" (dict "context" . "suffix" "admin-bootstrap") }}

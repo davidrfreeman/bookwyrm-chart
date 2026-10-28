@@ -1,0 +1,94 @@
+{{- if .Values.garage.enabled }}
+{{- if eq .Values.s3.bucket .Values.s3.exportsBucket }}
+{{- fail "s3.exportsBucket must differ from the public s3.bucket" }}
+{{- end }}
+{{- if contains "/" .Values.s3.customDomain }}
+{{- fail "bundled Garage requires s3.customDomain to be a hostname without a path" }}
+{{- end }}
+{{- $name := include "bookwyrm.resourceName" (dict "context" . "suffix" "garage-bootstrap") }}
+{{- $secret := include "bookwyrm.s3SecretName" . }}
+{{- $previous := lookup "v1" "Secret" .Release.Namespace $secret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secret }}
+type: Opaque
+{{- with $previous.data }}
+data: {{ toYaml . | nindent 2 }}
+{{- end }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [{{ $secret | quote }}]
+    verbs: [patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "bookwyrm.resourceName" (dict "context" . "suffix" (printf "garage-bootstrap-%v" .Release.Revision)) }}
+spec:
+  activeDeadlineSeconds: 600
+  backoffLimit: 3
+  ttlSecondsAfterFinished: {{ .Values.migration.ttlSecondsAfterFinished }}
+  template:
+    spec:
+      serviceAccountName: {{ $name }}
+      restartPolicy: OnFailure
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: bootstrap
+          image: {{ include "bookwyrm.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [python, -c]
+          args:
+            - {{ .Files.Get "files/garage-bootstrap.py" | quote }}
+          env:
+            - name: GARAGE_ADMIN_URL
+              value: {{ printf "http://%s:%v" (include "garage.fullname" .Subcharts.garage) .Values.garage.service.ports.admin | quote }}
+            - name: ASSET_BUCKET
+              value: {{ .Values.s3.bucket | quote }}
+            - name: EXPORT_BUCKET
+              value: {{ .Values.s3.exportsBucket | quote }}
+            - name: ASSET_HOST
+              value: {{ .Values.s3.customDomain | quote }}
+            - name: KEY_NAME
+              value: {{ $name | quote }}
+            - name: CREDENTIAL_SECRET
+              value: {{ $secret | quote }}
+          volumeMounts:
+            - name: admin
+              mountPath: /garage
+              readOnly: true
+      volumes:
+        - name: admin
+          secret:
+            secretName: {{ include "garage.secretName" .Subcharts.garage | quote }}
+            items:
+              - key: adminToken
+                path: admin-token
+{{- end }}

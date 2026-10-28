@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "bookwyrm.resourceName" (dict "context" . "suffix" "admin-bootstrap") }}
+data:
+  admin-bootstrap.py: |
+{{ .Files.Get "files/admin-bootstrap.py" | indent 4 }}
