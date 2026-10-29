@@ -2,7 +2,7 @@ apiVersion: v2
 name: bookwyrm
 description: Unofficial experimental BookWyrm deployment with S3 storage and optional testing-only dependencies
 type: application
-version: 1.0.1
+version: 1.0.2
 appVersion: "v0.9.3"
 dependencies:
   - name: postgresql
